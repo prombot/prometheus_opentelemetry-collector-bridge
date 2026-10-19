@@ -23,7 +23,6 @@ import (
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/receiver"
 	scraperhelper "go.opentelemetry.io/collector/scraper/scraperhelper"
-	"go.uber.org/zap"
 )
 
 // prometheusReceiver implements the receiver.Metrics interface for Prometheus exporters.
@@ -78,52 +77,34 @@ func (r *prometheusReceiver) Start(ctx context.Context, host component.Host) err
 		scraperhelper.AddMetricsScraper(r.settings.ID.Type(), r.scraper),
 	)
 	if err != nil {
-		return errors.Join(
-			fmt.Errorf("failed to create scraper controller: %w", err),
-			r.stopExporter(ctx),
-		)
+		return fmt.Errorf("failed to create scraper controller: %w", err)
 	}
 	r.controller = ctrl
 
 	r.settings.Logger.Info("Prometheus exporter receiver started successfully")
-	if err := r.controller.Start(ctx, host); err != nil {
-		return errors.Join(err, r.stopExporter(ctx))
-	}
-	return nil
+	return r.controller.Start(ctx, host)
 }
 
 // Shutdown stops the receiver's operation.
 func (r *prometheusReceiver) Shutdown(ctx context.Context) error {
 	r.settings.Logger.Info("Shutting down Prometheus exporter receiver")
 
-	var errs []error
+	var errs error
 	if r.controller != nil {
 		if err := r.controller.Shutdown(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("failed to shutdown scraper controller: %w", err))
+			errs = fmt.Errorf("failed to shutdown scraper controller: %w", err)
 		}
+		r.controller = nil
 	}
 
-	if err := r.stopExporter(ctx); err != nil {
-		r.settings.Logger.Error("Failed to shutdown exporter", zap.Error(err))
-		errs = append(errs, err)
+	if err := r.shutdownExporter.Shutdown(ctx); err != nil {
+		errs = errors.Join(errs, fmt.Errorf("failed to shutdown exporter: %w", err))
 	}
+	r.shutdownExporter = nil
 
-	if err := errors.Join(errs...); err != nil {
-		return err
+	if errs != nil {
+		return errs
 	}
 	r.settings.Logger.Info("Prometheus exporter receiver shut down successfully")
-	return nil
-}
-
-func (r *prometheusReceiver) stopExporter(ctx context.Context) error {
-	if r.shutdownExporter == nil {
-		return nil
-	}
-
-	shutdown := r.shutdownExporter
-	r.shutdownExporter = nil
-	if err := shutdown(ctx); err != nil {
-		return fmt.Errorf("failed to shutdown exporter: %w", err)
-	}
 	return nil
 }
