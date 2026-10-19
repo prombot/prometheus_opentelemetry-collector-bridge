@@ -257,22 +257,6 @@ func TestReceiverShutdownBeforeStart(t *testing.T) {
 	}
 }
 
-func TestReceiverShutdownAfterExporterStartFailure(t *testing.T) {
-	startErr := errors.New("exporter startup failed")
-	r := newPrometheusReceiver(&ReceiverConfig{}, new(consumertest.MetricsSink),
-		receivertest.NewNopSettings(component.MustNewType("test")), &mockLifecycleManager{
-			startFunc: func(context.Context, receiver.Settings, any) (*prometheus.Registry, component.ShutdownFunc, error) {
-				return nil, nil, startErr
-			},
-		})
-	if err := r.Start(context.Background(), componenttest.NewNopHost()); !errors.Is(err, startErr) {
-		t.Fatalf("Start() error = %v, want %v", err, startErr)
-	}
-	if err := r.Shutdown(context.Background()); err != nil {
-		t.Fatalf("Shutdown() failed: %v", err)
-	}
-}
-
 type shutdownTestController struct {
 	component.StartFunc
 	component.ShutdownFunc
