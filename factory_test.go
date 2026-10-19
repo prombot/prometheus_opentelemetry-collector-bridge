@@ -16,6 +16,7 @@ package prometheuscollectorbridge
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -24,6 +25,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer/consumertest"
+	"go.opentelemetry.io/collector/otelcol"
+	"go.opentelemetry.io/collector/otelcol/otelcoltest"
 	"go.opentelemetry.io/collector/receiver"
 	"go.opentelemetry.io/collector/receiver/receivertest"
 )
@@ -290,6 +293,67 @@ func TestNewFactory_DefaultConfig(t *testing.T) {
 			}
 			if !reflect.DeepEqual(receiverCfg.ExporterConfig, tt.want) {
 				t.Errorf("ExporterConfig = %#v, want %#v", receiverCfg.ExporterConfig, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewFactory_DefaultConfigsAreIndependent(t *testing.T) {
+	defaults := map[string]interface{}{
+		"endpoint": "first",
+		"nested": map[string]interface{}{
+			"enabled": true,
+		},
+		"items": []string{"one", "two"},
+	}
+	factory := NewFactory(
+		component.MustNewType("test"),
+		&mockLifecycleManager{},
+		&mockConfigUnmarshaler{},
+		WithComponentDefaults(defaults),
+	)
+
+	first := factory.CreateDefaultConfig().(*ReceiverConfig)
+	second := factory.CreateDefaultConfig().(*ReceiverConfig)
+
+	first.ExporterConfig["endpoint"] = "changed"
+	first.ExporterConfig["nested"].(map[string]interface{})["enabled"] = false
+	first.ExporterConfig["items"].([]string)[0] = "changed"
+
+	want := map[string]interface{}{
+		"endpoint": "first",
+		"nested": map[string]interface{}{
+			"enabled": true,
+		},
+		"items": []string{"one", "two"},
+	}
+	if !reflect.DeepEqual(second.ExporterConfig, want) {
+		t.Fatalf("mutating one default config changed another.\n got: %#v\nwant: %#v", second.ExporterConfig, want)
+	}
+}
+
+func TestNewFactory_MultipleInstancesFromCollectorConfig(t *testing.T) {
+	factory := NewFactoryWithDecoder(component.MustNewType("test"), &mockLifecycleManager{}, &mockConfigDecoder{},
+		WithComponentDefaults(map[string]any{
+			"endpoint": "default",
+			"nested":   map[string]any{"mode": "default"},
+		}))
+	factories := otelcol.Factories{
+		Receivers: map[component.Type]receiver.Factory{factory.Type(): factory},
+	}
+	cfg, err := otelcoltest.LoadConfig(filepath.Join("testdata", "multi_instance.yaml"), factories)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, want := range map[string]map[string]any{
+		"a": {"endpoint": "a", "nested": map[string]any{"mode": "a"}},
+		"b": {"endpoint": "b", "nested": map[string]any{"mode": "default"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := cfg.Receivers[component.NewIDWithName(factory.Type(), name)].(*ReceiverConfig)
+			if !reflect.DeepEqual(got.ExporterConfig, want) {
+				t.Errorf("ExporterConfig = %#v, want %#v", got.ExporterConfig, want)
 			}
 		})
 	}

@@ -1,0 +1,9 @@
+receivers:
+  test/a:
+    exporter_config:
+      endpoint: a
+      nested:
+        mode: a
+  test/b:
+    exporter_config:
+      endpoint: b
